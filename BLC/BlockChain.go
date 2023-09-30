@@ -5,6 +5,7 @@ import (
 	"github.com/boltdb/bolt"
 	"log"
 	"math/big"
+	"time"
 )
 
 const dbName = "blockchain.db"  // 数据库名称
@@ -16,35 +17,59 @@ type Blockchain struct {
 	DB  *bolt.DB // 数据库
 }
 
-// PrintChain 打印所有区块
-func (blockchain *Blockchain) PrintChain() {
-	currentHash := blockchain.Tip
+// BlockchainIterator 区块链迭代对象
+type BlockchainIterator struct {
+	currentHash []byte   // 当前区块的hash
+	DB          *bolt.DB // 数据库
+}
 
-	blockchain.DB.View(func(tx *bolt.Tx) error {
+// Iterator 迭代所有区块
+func (blockchain *Blockchain) Iterator() *BlockchainIterator {
+	return &BlockchainIterator{blockchain.Tip, blockchain.DB}
+}
+
+// Next 获取上一个区块
+func (blockchainIterator *BlockchainIterator) Next() *Block {
+	block := &Block{}
+	err := blockchainIterator.DB.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(blockTableName))
 		if bucket == nil {
 			return nil
 		}
-		for {
-			lastBlockByte := bucket.Get(currentHash)
-			lastBlock := DeSerializeBlock(lastBlockByte)
-
-			fmt.Printf("Height：%d\n", lastBlock.Height)
-			fmt.Printf("PreBlockHash：%x\n", lastBlock.PreBlockHash)
-			fmt.Printf("Data：%s\n", lastBlock.Data)
-			fmt.Printf("Timestamp：%d\n", lastBlock.Timestamp)
-			fmt.Printf("Hash：%x\n", lastBlock.Hash)
-			fmt.Printf("Nonce：%d\n", lastBlock.Nonce)
-			fmt.Println()
-			var hashInt big.Int
-			hashInt.SetBytes(lastBlock.PreBlockHash)
-			if big.NewInt(0).Cmp(&hashInt) == 0 {
-				return nil
-			}
-			currentHash = lastBlock.PreBlockHash
-		}
+		// 获取当前区块，通过当前区块获取上一个区块哈说
+		blockBytes := bucket.Get(blockchainIterator.currentHash)
+		block = DeSerializeBlock(blockBytes)
+		// 更新当前hash
+		blockchainIterator.currentHash = block.PreBlockHash
 		return nil
 	})
+	if err != nil {
+		log.Panic(err)
+	}
+	return block
+}
+
+// PrintChain 打印所有区块
+func (blockchain *Blockchain) PrintChain() {
+	blockchainIterator := blockchain.Iterator()
+	for {
+		block := blockchainIterator.Next()
+
+		fmt.Printf("Height：%d\n", block.Height)
+		fmt.Printf("PreBlockHash：%x\n", block.PreBlockHash)
+		fmt.Printf("Data：%s\n", block.Data)
+		fmt.Printf("Timestamp：%s\n", time.Unix(block.Timestamp, 0).Format("2006-01-02 03:04:05 PM"))
+		fmt.Printf("Hash：%x\n", block.Hash)
+		fmt.Printf("Nonce：%d\n", block.Nonce)
+		fmt.Println()
+
+		// 判断是否是第一个区块
+		var hashInt big.Int
+		hashInt.SetBytes(block.PreBlockHash)
+		if big.NewInt(0).Cmp(&hashInt) == 0 {
+			break
+		}
+	}
 }
 
 // AddBlockToBlockchain 添加区块
